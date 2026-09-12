@@ -1,0 +1,568 @@
+import "./App.css";
+import { useEffect, useState } from "react";
+import { MapContainer, TileLayer, GeoJSON } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import { raceData as initialRaceData } from "./data/raceData";
+import * as turf from "@turf/turf";
+
+
+
+function App() {
+
+  const getPrefectureFromCoordinates = (
+    latitude: number,
+    longitude: number
+  ) => {
+    if (!geoData) return null;
+
+    const point = turf.point([
+      longitude,
+      latitude,
+    ]);
+
+    for (const feature of geoData.features) {
+      try {
+        if (
+          turf.booleanPointInPolygon(
+            point,
+            feature
+          )
+        ) {
+          return feature.properties.name;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    return null;
+  };
+
+
+  const [raceData, setRaceData] =
+    useState(initialRaceData);
+
+  const [selectedPrefecture, setSelectedPrefecture] =
+    useState<string | null>(null);
+
+  const [showMenu, setShowMenu] =
+    useState(false);
+  
+  const [menuPage, setMenuPage] =
+    useState("");
+  
+  const [raceFilter, setRaceFilter] =
+    useState("all");
+
+  const filteredPrefectures =
+    Object.keys(raceData).filter(
+      (prefecture) => {
+
+        if (raceFilter === "all")
+          return true;
+
+        return raceData[
+          prefecture as keyof typeof raceData
+        ].some(
+          (race: any) =>
+            race.type === raceFilter
+        );
+      }
+    );
+
+  const [geoData, setGeoData] = useState<any>(null);
+
+  useEffect(() => {
+    const savedData =
+      localStorage.getItem("raceData");
+
+    if (savedData) {
+      setRaceData(JSON.parse(savedData));
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "raceData",
+      JSON.stringify(raceData)
+    );
+  }, [raceData]);
+
+  useEffect(() => {
+    fetch("/japan.geojson")
+      .then((res) => res.json())
+      .then((data) => setGeoData(data));
+  }, []);
+
+  const [newPrefecture, setNewPrefecture] =
+    useState("");
+
+  const [newRaceName, setNewRaceName] =
+    useState("");
+
+  const [newRaceDate, setNewRaceDate] =
+    useState("");
+
+  const [newRaceTime, setNewRaceTime] =
+    useState("");
+  
+  const [newGarminUrl, setNewGarminUrl] =
+    useState("");
+  
+  const handleAddRace = () => {
+    if (
+      !newPrefecture ||
+      !newRaceName ||
+      !newRaceDate ||
+      !newRaceTime
+    ) {
+      alert("全て入力してください");
+      return;
+    }
+
+    const updatedRaceData: any = {
+      ...raceData,
+
+      [newPrefecture]: [
+        ...(raceData[
+          newPrefecture as keyof typeof raceData
+        ] || []),
+        {
+          race: newRaceName,
+          date: newRaceDate,
+          time: newRaceTime,
+          newGarminUrl: newGarminUrl,
+        },
+      ],
+    };
+
+    setRaceData(updatedRaceData);
+
+    setNewPrefecture("");
+    setNewRaceName("");
+    setNewRaceDate("");
+    setNewRaceTime("");
+    setNewGarminUrl("");
+  };
+
+  const handleDeleteRace = (
+    prefecture: string,
+    indexToDelete: number
+  ) => {
+
+    const prefectureRaces =
+      raceData[
+        prefecture as keyof typeof raceData
+      ] || [];
+
+    const updatedPrefectureRaces =
+      prefectureRaces.filter(
+        (_, index) => index !== indexToDelete
+      );
+
+    const updatedRaceData: any = {
+      ...raceData,
+      updatedPrefectureRaces,
+    };
+
+    if (updatedPrefectureRaces.length === 0) {
+      const tempData = { ...updatedRaceData};
+      delete updatedRaceData[prefecture];
+      setRaceData(tempData);
+    }else{
+      setRaceData(updatedRaceData);
+    }
+
+    setRaceData(updatedRaceData);
+  };
+
+  const handleGpxUpload = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      const gpxText =
+        e.target?.result as string;
+
+      const parser = new DOMParser();
+
+      const xml =
+        parser.parseFromString(
+          gpxText,
+          "text/xml"
+        );
+
+      const raceName =
+        xml.querySelector("name")?.textContent;
+
+      const firstTrackPoint =
+        xml.querySelector("trkpt");
+
+      const lat =
+        firstTrackPoint?.getAttribute("lat");
+
+      const lon =
+        firstTrackPoint?.getAttribute("lon");
+      
+      const raceTimeTag =
+        xml.querySelector("time");
+
+      const raceDate =
+        raceTimeTag?.textContent;
+
+      const timeNodes =
+        xml.querySelectorAll("trkpt time");
+
+      const firstTime =
+        timeNodes[0]?.textContent;
+
+      const lastTime =
+        timeNodes[
+          timeNodes.length - 1
+        ]?.textContent;
+
+      const link =
+        xml.querySelector("link");
+
+      const garminUrl =
+        link?.getAttribute("href");
+
+      console.log("大会名", raceName);
+      console.log("緯度", lat);
+      console.log("経度", lon);
+      console.log(gpxText);
+
+      if (raceName) {
+        setNewRaceName(raceName);
+      }
+
+      if (raceDate) {
+        const date = raceDate
+          .split("T")[0];
+
+        setNewRaceDate(date);
+      } 
+
+      if (lat && lon) {
+        const prefecture =
+          getPrefectureFromCoordinates(
+            Number(lat),
+            Number(lon)
+          );
+
+        if (prefecture) {
+          setNewPrefecture(prefecture);
+        }
+      }
+
+      if (firstTime && lastTime) {
+
+        const start =
+          new Date(firstTime);
+
+        const end =
+          new Date(lastTime);
+
+        const seconds =
+          (end.getTime() -
+          start.getTime()) / 1000;
+
+        const hours =
+          Math.floor(seconds / 3600);
+
+        const minutes =
+          Math.floor(
+            (seconds % 3600) / 60
+          );
+
+        const remainingSeconds =
+          Math.floor(seconds % 60);
+
+        const formattedTime =
+          `${hours
+            .toString()
+            .padStart(2, "0")}:` +
+          `${minutes
+            .toString()
+            .padStart(2, "0")}:` +
+          `${remainingSeconds
+            .toString()
+            .padStart(2, "0")}`;
+
+        setNewRaceTime(formattedTime);
+      }
+
+      if (garminUrl) {
+        setNewGarminUrl(garminUrl);
+      }
+
+    };
+    
+
+    reader.readAsText(file);
+  };
+
+
+  return (
+    <div className="app-container">
+      <button
+        className="menu-button"
+        onClick={() =>
+          setShowMenu(!showMenu)
+        }
+      >
+        ☰
+      </button>
+      {showMenu && (
+        <div className="menu-panel">
+
+          <button
+            onClick={() =>
+            setMenuPage("progress")
+            }
+          >
+            全国制覇率
+          </button>
+
+          <button
+            onClick={() =>
+              setMenuPage("add")
+            }
+          >
+            大会追加
+          </button>
+
+          <button
+          onClick={() =>
+          setMenuPage("map")
+          }
+          >
+            地図
+          </button>
+
+          <button
+            onClick={() =>
+              setMenuPage("filter")
+            }
+          >
+            フィルタ
+          </button>
+
+          <button>
+            設定
+          </button>
+
+        </div>
+      )}
+
+      {menuPage === "progress" && (
+        <div className="progress-card">
+          <h3>🏃 全国制覇率</h3>
+
+          <p>
+            {filteredPrefectures.length} / 47
+          </p>
+          <p>
+            {(
+              (filteredPrefectures.length / 47) *
+              100
+            ).toFixed(1)}
+            %
+          </p>
+        </div>
+      )}
+
+    {selectedPrefecture &&
+        raceData[selectedPrefecture as keyof typeof raceData] && (
+          <div className="race-card">
+            <button
+              className="close-button"
+              onClick={() =>
+                setSelectedPrefecture(null)
+              }
+            >
+              ×
+            </button>
+
+            <h2>{selectedPrefecture}</h2>
+
+            {raceData[
+              selectedPrefecture as keyof typeof raceData
+            ].map((race, index) => (
+              <div key={index}>
+                <p>大会名：{race.race}</p>
+                <p>日付：{race.date}</p>
+                <p>タイム：{race.time}</p>
+
+                {race.garminUrl && (
+                  <a>
+                    href={race.garminUrl}
+                    target="_blank"
+                  </a>
+                )}
+                
+                <button
+                  onClick={() =>
+                    handleDeleteRace(
+                      selectedPrefecture,
+                      index
+                    )
+                  }
+                  className="delete-button"
+                >
+                  削除
+                </button>
+
+                <hr />
+              </div>
+            ))}
+
+          </div>
+        )}
+
+    {menuPage === "add" && (
+      <div className="add-race-card">
+
+        <h3>大会追加</h3>
+
+        <select
+          value={newPrefecture}
+          onChange={(e) =>
+            setNewPrefecture(e.target.value)
+          }
+        >
+          <option value="">
+            都道府県選択
+          </option>
+
+          {geoData?.features.map(
+            (feature: any) => (
+              <option
+                key={feature.properties.name}
+                value={feature.properties.name}
+              >
+                {feature.properties.name}
+              </option>
+            )
+          )}
+        </select>
+
+        <input
+          type="text"
+          placeholder="大会名"
+          value={newRaceName}
+          onChange={(e) =>
+            setNewRaceName(e.target.value)
+          }
+        />
+
+        <input
+          type="date"
+          value={newRaceDate}
+          onChange={(e) =>
+            setNewRaceDate(e.target.value)
+          }
+        />
+
+        <input
+          type="text"
+          placeholder="03:30:00"
+          value={newRaceTime}
+          onChange={(e) =>
+            setNewRaceTime(e.target.value)
+          }
+        />
+
+        <input
+          type="text"
+          placeholder="Garmin URL"
+          value={newGarminUrl}
+          onChange={(e) =>
+            setNewGarminUrl(e.target.value)
+          }
+        />
+
+        <button onClick={handleAddRace}>
+          大会追加
+        </button>
+
+        <input
+          type="file"
+          accept=".gpx"
+          onChange={handleGpxUpload}
+        />
+      </div>
+    )}
+
+    {menuPage === "filter" && (
+      <div className="filter-card">
+
+        <button>すべて</button>
+
+        <button>フル</button>
+
+        <button>ハーフ</button>
+
+        <button>トレイル</button>
+
+        <button>その他</button>
+
+      </div>
+    )}
+
+
+    <MapContainer
+      center={[36.2, 138.2]}
+      zoom={5}
+      style={{ height: "100vh", width: "100%" }}
+    >
+      <TileLayer
+        attribution="OpenStreetMap"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+
+      {geoData && (
+        <GeoJSON
+          data={geoData}
+          style={(feature) => {
+            const prefName = feature?.properties?.name;
+
+            return {
+              color: "#333",
+              weight: 1,
+              fillColor: filteredPrefectures.includes(prefName)
+                ? "#2196F3"
+                : "#E0E0E0",
+              fillOpacity: 0.7,
+            };
+          }}
+          onEachFeature={(feature, layer) => {
+            layer.bindTooltip(
+              feature.properties.name
+            );
+
+            layer.on({
+              click: () => {
+                setSelectedPrefecture(
+                  feature.properties.name
+                );
+              },
+            });
+          }}
+        />
+      )}
+    </MapContainer>
+
+  </div>
+
+    
+    
+  );
+}
+
+export default App;
