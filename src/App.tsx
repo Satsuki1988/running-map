@@ -5,9 +5,53 @@ import "leaflet/dist/leaflet.css";
 import { raceData as initialRaceData } from "./data/raceData";
 import * as turf from "@turf/turf";
 
+import { auth, provider } from "./firebase.ts";
+import {
+  signInWithPopup,
+  onAuthStateChanged
+} from "firebase/auth";
 
+import {
+  signOut
+} from "firebase/auth";
+
+import {
+  doc,
+  setDoc,
+  getDoc
+} from "firebase/firestore";
+
+import { db } from "./firebase";
 
 function App() {
+
+  const saveRaceData = async (
+    dataToSave: any
+  ) => {
+
+    if (!user) return;
+
+    try {
+
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          email: user.email,
+          name: user.displayName,
+          raceData: dataToSave,
+          lastUpdated:
+            new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+    }
+  };
+
 
   const getPrefectureFromCoordinates = (
     latitude: number,
@@ -42,8 +86,14 @@ function App() {
   const [raceData, setRaceData] =
     useState(initialRaceData);
 
+  const [user, setUser] = useState<any>(null);
+
   const [selectedPrefecture, setSelectedPrefecture] =
     useState<string | null>(null);
+  
+  const [lastUpdated,
+    setLastUpdated] =
+    useState("");
 
   const [showMenu, setShowMenu] =
     useState(false);
@@ -70,31 +120,117 @@ function App() {
       }
     );
 
-
-
   const [geoData, setGeoData] = useState<any>(null);
 
-  useEffect(() => {
-    const savedData =
-      localStorage.getItem("raceData");
+  const login = async () => {
+    try {
+      const result =
+        await signInWithPopup(
+          auth,
+          provider
+        );
 
-    if (savedData) {
-      setRaceData(JSON.parse(savedData));
+      setUser(result.user);
+
+    } catch (error) {
+      console.error(error);
     }
-  }, []);
+  };
+
+  const logout = async () => {
+
+    await signOut(auth);
+
+    setUser(null);
+
+    setRaceData(
+      initialRaceData
+    );
+
+    setLastUpdated("");
+
+  };
 
   useEffect(() => {
-    localStorage.setItem(
-      "raceData",
-      JSON.stringify(raceData)
-    );
-  }, [raceData]);
+
+    const unsubscribe =
+      onAuthStateChanged(
+        auth,
+        (currentUser) => {
+
+          if (currentUser) {
+
+            setUser(
+              currentUser
+            );
+
+          }
+
+        }
+      );
+
+    return () =>
+      unsubscribe();
+
+  }, []);
 
   useEffect(() => {
     fetch("/japan.geojson")
       .then((res) => res.json())
       .then((data) => setGeoData(data));
   }, []);
+
+  useEffect(() => {
+
+    const loadRaceData = async () => {
+
+      if (!user) return;
+
+      try {
+
+        const docRef =
+          doc(db, "users", user.uid);
+
+        const docSnap =
+          await getDoc(docRef);
+
+        if (docSnap.exists()) {
+
+          if (
+            docSnap.data().raceData
+          ) {
+
+            setRaceData(
+              docSnap.data().raceData
+            );
+
+          }
+
+          if (
+            docSnap.data().lastUpdated
+          ) {
+
+            setLastUpdated(
+              docSnap.data()
+                .lastUpdated
+            );
+
+          }
+
+        }
+
+      } catch (error) {
+
+        console.error(error);
+
+      }
+
+    };
+
+    // ←これが重要
+    loadRaceData();
+
+  }, [user]);
 
   const [newPrefecture, setNewPrefecture] =
     useState("");
@@ -142,12 +278,15 @@ function App() {
           date: newRaceDate,
           time: newRaceTime,
           distance: newDistance,
-          newGarminUrl: newGarminUrl,
+          type: newRaceType,
+          garminUrl: newGarminUrl,
         },
       ],
     };
 
     setRaceData(updatedRaceData);
+
+    saveRaceData(updatedRaceData);
 
     setNewPrefecture("");
     setNewRaceName("");
@@ -179,6 +318,8 @@ function App() {
 
     setRaceData(updatedRaceData);
 
+    saveRaceData(updatedRaceData);
+
     setEditingRace(null);
   };
       
@@ -194,24 +335,30 @@ function App() {
 
     const updatedPrefectureRaces =
       prefectureRaces.filter(
-        (_, index) => index !== indexToDelete
+        (_, index) =>
+          index !== indexToDelete
       );
 
     const updatedRaceData: any = {
       ...raceData,
-      updatedPrefectureRaces,
+      [prefecture]:
+        updatedPrefectureRaces,
     };
 
-    if (updatedPrefectureRaces.length === 0) {
-      const tempData = { ...updatedRaceData};
-      delete updatedRaceData[prefecture];
-      setRaceData(tempData);
-    }else{
-      setRaceData(updatedRaceData);
+    if (updatedPrefectureRaces.length === 0
+    ) {
+      delete updatedRaceData[
+        prefecture
+      ];
     }
 
     setRaceData(updatedRaceData);
+
+    saveRaceData(updatedRaceData);
+
   };
+
+
 
   const handleGpxUpload = (
     event: React.ChangeEvent<HTMLInputElement>
@@ -268,11 +415,6 @@ function App() {
 
       const garminUrl =
         link?.getAttribute("href");
-
-      console.log("大会名", raceName);
-      console.log("緯度", lat);
-      console.log("経度", lon);
-      console.log(gpxText);
 
       if (raceName) {
         setNewRaceName(raceName);
@@ -355,11 +497,6 @@ function App() {
           turf.length(line, {
             units: "kilometers",
           });
-
-        console.log(
-          "距離:",
-          distance
-        );
 
         setNewDistance(
           distance.toFixed(2)
@@ -654,13 +791,6 @@ function App() {
           importedData
         );
 
-        localStorage.setItem(
-          "raceData",
-          JSON.stringify(
-            importedData
-          )
-        );
-
         alert(
           "データを復元しました"
         );
@@ -680,6 +810,66 @@ function App() {
 
   return (
     <div className="app-container">
+      <button
+        onClick={login}
+        style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          zIndex: 9999,
+        }}
+      >
+        Googleログイン
+      </button>
+
+      <button
+       onClick={logout}
+       style={{
+        position: "absolute",
+        top: "50px",
+        right: "10px",
+        zIndex:9999,
+       }}
+      >
+        ログアウト
+      </button>
+
+      {user && (
+        <div
+          style={{
+            position: "absolute",
+            top: "90px",
+            right: "10px",
+            zIndex: 9999,
+            background: "white",
+            padding: "8px",
+            borderRadius: "8px",
+          }}
+        >
+          <div>
+            {user.displayName}
+          </div>
+
+          {lastUpdated && (
+            <div
+              style={{
+                fontSize: "12px",
+                marginTop: "4px",
+              }}
+            >
+              最終保存:
+              {
+                new Date(
+                  lastUpdated
+                ).toLocaleString(
+                  "ja-JP"
+                )
+              }
+            </div>
+          )}
+        </div>
+      )}
+
       <button
         className="menu-button"
         onClick={() =>

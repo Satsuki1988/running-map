@@ -5,9 +5,84 @@ import "leaflet/dist/leaflet.css";
 import { raceData as initialRaceData } from "./data/raceData";
 import * as turf from "@turf/turf";
 
+import { auth, provider } from "./firebase.ts";
+import {
+  signInWithPopup
+} from "firebase/auth";
 
+import {
+  doc,
+  setDoc,
+  getDoc
+} from "firebase/firestore";
+
+import { db } from "./firebase";
 
 function App() {
+
+  const testFirestore = async () => {
+
+    if (!user) {
+      alert("ログインしてください");
+      return;
+    }
+
+    try {
+
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          name: user.displayName,
+          email: user.email,
+          test: "Firestore接続成功"
+        },
+        { merge: true } // ←追加
+      );
+
+      alert("Firestore保存成功");
+
+    } catch (error) {
+
+      console.error(error);
+      alert("Firestore保存失敗");
+
+    }
+  };
+
+  const saveRaceData = async (
+    dataToSave: any
+  ) => {
+
+    console.log(
+      "保存実行",
+      JSON.stringify(raceData)
+    );
+
+    if (!user) return;
+
+    try {
+
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          email: user.email,
+          name: user.displayName,
+          raceData: dataToSave,
+        },
+        { merge: true }
+      );
+
+      console.log(
+        "Firestore保存完了"
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+    }
+  };
+
 
   const getPrefectureFromCoordinates = (
     latitude: number,
@@ -42,6 +117,8 @@ function App() {
   const [raceData, setRaceData] =
     useState(initialRaceData);
 
+  const [user, setUser] = useState<any>(null);
+
   const [selectedPrefecture, setSelectedPrefecture] =
     useState<string | null>(null);
 
@@ -70,7 +147,38 @@ function App() {
       }
     );
 
+
+
   const [geoData, setGeoData] = useState<any>(null);
+
+  const login = async () => {
+    try {
+      const result =
+        await signInWithPopup(
+          auth,
+          provider
+        );
+
+      setUser(result.user);
+      /*await setDoc(
+        doc(db, "users", result.user.uid),
+        {
+          email: result.user.email,
+          name: result.user.displayName,
+        },
+        { merge: true }
+      );*/
+
+      console.log("raceData保存完了");
+
+      console.log(
+        "ログイン成功",
+        result.user.email
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   useEffect(() => {
     const savedData =
@@ -82,10 +190,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+
     localStorage.setItem(
       "raceData",
       JSON.stringify(raceData)
     );
+
   }, [raceData]);
 
   useEffect(() => {
@@ -93,6 +203,90 @@ function App() {
       .then((res) => res.json())
       .then((data) => setGeoData(data));
   }, []);
+
+  useEffect(() => {
+
+    const loadRaceData = async () => {
+
+      if (!user) return;
+
+      try {
+
+        const docRef =
+          doc(db, "users", user.uid);
+
+        const docSnap =
+          await getDoc(docRef);
+          
+        const docData = docSnap.data();
+
+        console.log("docData", docData);
+
+        console.log(
+          "raceData存在?",
+          !!docData?.raceData
+        );
+
+        if (docSnap.exists()) {
+
+          console.log(
+            "raceData中身",
+            docData?.raceData
+          );
+
+        }
+        console.log(
+          "読込データ",
+          docSnap.data()
+        );
+
+        if (
+          docSnap.exists() &&
+          docSnap.data().raceData
+        ) {
+
+          console.log(
+            "セット後raceData",
+            docSnap.data().raceData
+          );
+
+          setRaceData(
+            docSnap.data().raceData
+          );
+
+          console.log(
+            "Firestore読込成功"
+          );
+
+        }
+
+        console.log(
+          "Firestore UID",
+          user.uid
+        );
+
+        console.log(
+          "Firestore全データ",
+          JSON.stringify(docSnap.data())
+        );
+
+        console.log(
+          "読み込みパス",
+          docRef.path
+        );
+
+      } catch (error) {
+
+        console.error(error);
+
+      }
+
+    };
+
+    // ←これが重要
+    loadRaceData();
+
+  }, [user]);
 
   const [newPrefecture, setNewPrefecture] =
     useState("");
@@ -105,7 +299,13 @@ function App() {
 
   const [newRaceTime, setNewRaceTime] =
     useState("");
-  
+
+  const [newDistance, setNewDistance] =
+    useState("");
+    
+  const [newRaceType, setNewRaceType] =
+    useState("full");
+
   const [newGarminUrl, setNewGarminUrl] =
     useState("");
   
@@ -114,7 +314,9 @@ function App() {
       !newPrefecture ||
       !newRaceName ||
       !newRaceDate ||
-      !newRaceTime
+      !newRaceTime ||
+      !newDistance ||
+      !newRaceType
     ) {
       alert("全て入力してください");
       return;
@@ -131,6 +333,8 @@ function App() {
           race: newRaceName,
           date: newRaceDate,
           time: newRaceTime,
+          distance: newDistance,
+          type: newRaceType,
           newGarminUrl: newGarminUrl,
         },
       ],
@@ -138,13 +342,43 @@ function App() {
 
     setRaceData(updatedRaceData);
 
+    saveRaceData(updatedRaceData);
+
     setNewPrefecture("");
     setNewRaceName("");
     setNewRaceDate("");
     setNewRaceTime("");
     setNewGarminUrl("");
+    setNewRaceType("full");
   };
 
+  const [editingRace, setEditingRace] =
+    useState<any>(null);
+
+  const handleSaveEdit = () => {
+
+    const updatedRaceData: any =
+      { ...raceData };
+
+    updatedRaceData[
+      editingRace.prefecture
+    ][editingRace.index] = {
+
+      race: editingRace.race,
+      date: editingRace.date,
+      time: editingRace.time,
+      distance: editingRace.distance,
+      type: editingRace.type,
+      garminUrl: editingRace.garminUrl,
+    };
+
+    setRaceData(updatedRaceData);
+
+    saveRaceData(updatedRaceData);
+
+    setEditingRace(null);
+  };
+      
   const handleDeleteRace = (
     prefecture: string,
     indexToDelete: number
@@ -174,6 +408,7 @@ function App() {
     }
 
     setRaceData(updatedRaceData);
+    saveRaceData(updatedRaceData);
   };
 
   const handleGpxUpload = (
@@ -297,19 +532,367 @@ function App() {
         setNewRaceTime(formattedTime);
       }
 
+      const trackPoints =
+        xml.querySelectorAll("trkpt");
+      const coordinates: number[][] = [];
+      trackPoints.forEach((point) => {
+        const lat = Number(
+          point.getAttribute("lat")
+        );
+        const lon = Number(
+          point.getAttribute("lon")
+        );
+        coordinates.push([lon, lat]);
+      });
+      if (coordinates.length > 1) {
+
+        const line =
+          turf.lineString(coordinates);
+
+        const distance =
+          turf.length(line, {
+            units: "kilometers",
+          });
+
+        console.log(
+          "距離:",
+          distance
+        );
+
+        setNewDistance(
+          distance.toFixed(2)
+        );
+      }
+
       if (garminUrl) {
         setNewGarminUrl(garminUrl);
       }
 
     };
     
+    reader.readAsText(file);
+  };
+
+  const allRaces = Object.entries(raceData)
+    .flatMap(([prefecture, races]) =>
+      races.map((race: any) => ({
+        prefecture,
+        ...race,
+      }))
+    );
+
+  const filteredRaces =
+    raceFilter === "all"
+      ? allRaces
+      : allRaces.filter(
+          (race) =>
+            race.type === raceFilter
+        );
+  
+  const timeToSeconds = (
+    timeString: string
+  ) => {
+
+    return timeString
+      .split(":")
+      .reduce(
+        (acc: number, value: string) =>
+          60 * acc +
+          Number(value),
+        0
+      );
+
+  };
+
+  const secondsToTime = (
+    totalSeconds: number
+  ) => {
+
+    const hours =
+      Math.floor(totalSeconds / 3600);
+
+    const minutes =
+      Math.floor(
+        (totalSeconds % 3600) / 60
+      );
+
+    const seconds =
+      Math.floor(
+        totalSeconds % 60
+      );
+
+    return `${hours
+      .toString()
+      .padStart(2, "0")}:${
+        minutes
+          .toString()
+          .padStart(2, "0")
+      }:${
+        seconds
+          .toString()
+          .padStart(2, "0")
+      }`;
+  };
+        
+  const sortedRaces =
+    [...filteredRaces];
+  
+  const [sortType, setSortType] =
+    useState("date");
+
+  if (sortType === "date") {
+
+  sortedRaces.sort(
+      (a, b) =>
+        new Date(b.date).getTime() -
+        new Date(a.date).getTime()
+    );
+
+  }
+
+  if (sortType === "time") {
+    sortedRaces.sort(
+      (a,b) =>
+        timeToSeconds(a.time) -
+        timeToSeconds(b.time)
+    )
+  }
+
+  if (sortType === "year") {
+
+    sortedRaces.sort(
+      (a, b) =>
+        Number(
+          b.date.substring(0, 4)
+        ) -
+        Number(
+          a.date.substring(0, 4)
+        )
+    );
+
+  }
+
+  const prefectureBestTimes: Record<
+    string,
+    number
+  > = {};
+
+  Object.entries(raceData).forEach(
+    ([prefecture, races]) => {
+
+      const targetRaces =
+        races.filter(
+          (race: any) =>
+            raceFilter === "all" ||
+            race.type === raceFilter
+        );
+
+      if (targetRaces.length === 0) {
+        return;
+      }
+
+      prefectureBestTimes[prefecture] =
+        Math.min(
+          ...targetRaces.map(
+            (race: any) =>
+              timeToSeconds(
+                race.time
+              )
+          )
+        );
+
+    }
+  );
+
+  const totalDistance =
+    filteredRaces.reduce(
+      (sum, race) =>
+        sum +
+        (Number(race.distance) || 0),
+      0
+    );
+
+  const raceCount = filteredRaces.length
+
+  const bestTimeSeconds =
+    filteredRaces.length > 0
+      ? Math.min(
+          ...filteredRaces.map(
+            (race) =>
+              timeToSeconds(race.time)
+          )
+        )
+      : 0;
+
+  const averageTimeSeconds =
+  filteredRaces.length > 0
+    ? filteredRaces.reduce(
+        (sum, race) =>
+          sum +
+          timeToSeconds(race.time),
+        0
+      ) / filteredRaces.length
+    : 0;
+  
+  const bestRace =
+    filteredRaces.length > 0
+      ? filteredRaces.reduce(
+          (best, current) =>
+
+            timeToSeconds(current.time) <
+            timeToSeconds(best.time)
+
+              ? current
+              : best
+        )
+      : null;
+
+  const getPrefectureColor = (
+    prefecture: string
+  ) => {
+
+    const bestTime =
+      prefectureBestTimes[
+        prefecture
+      ];
+
+    if (!bestTime)
+      return "#E0E0E0";
+
+    if (raceFilter === "full") {
+
+      if (bestTime < 10800)
+        return "#FF0000";
+
+      if (bestTime < 12600)
+        return "#FF9800";
+
+      if (bestTime < 14400)
+        return "#FFEB3B";
+
+      if (bestTime < 16200)
+        return "#4CAF50";
+
+      return "#2196F3";
+    }
+
+    if (raceFilter === "half") {
+
+      if (bestTime < 5400)
+        return "#FF0000";
+
+      if (bestTime < 6300)
+        return "#FF9800";
+
+      if (bestTime < 7200)
+        return "#FFEB3B";
+
+      if (bestTime < 9000)
+        return "#4CAF50";
+
+      return "#2196F3";
+    }
+
+    return "#2196F3";
+  };
+
+  const handleExportData = () => {
+
+    const dataStr = JSON.stringify(
+      raceData,
+      null,
+      2
+    );
+
+    const blob = new Blob(
+      [dataStr],
+      {
+        type: "application/json",
+      }
+    );
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const link =
+      document.createElement("a");
+
+    link.href = url;
+
+    link.download =
+      "raceData.json";
+
+    link.click();
+
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportData = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+
+    const file =
+      event.target.files?.[0];
+
+    if (!file) return;
+
+    const reader =
+      new FileReader();
+
+    reader.onload = (e) => {
+
+      try {
+
+        const importedData =
+          JSON.parse(
+            e.target?.result as string
+          );
+
+        setRaceData(
+          importedData
+        );
+
+        localStorage.setItem(
+          "raceData",
+          JSON.stringify(
+            importedData
+          )
+        );
+
+        alert(
+          "データを復元しました"
+        );
+
+      } catch {
+
+        alert(
+          "JSONファイルの読込に失敗しました"
+        );
+
+      }
+
+    };
 
     reader.readAsText(file);
   };
 
-
   return (
     <div className="app-container">
+      <button
+        onClick={login}
+        style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          zIndex: 9999,
+        }}
+      >
+        Googleログイン
+      </button>
+      <button onClick={testFirestore}>
+        Firestoreテスト
+      </button>
+            
       <button
         className="menu-button"
         onClick={() =>
@@ -353,8 +936,28 @@ function App() {
             フィルタ
           </button>
 
-          <button>
-            設定
+          <button
+            onClick={() =>
+              setMenuPage("raceList")
+            }
+          >
+            大会一覧
+          </button>
+
+          <button
+            onClick={() =>
+              setMenuPage("stats")
+            }
+          >
+            統計
+          </button>
+
+          <button
+            onClick={() =>
+              setMenuPage("backup")
+            }
+          >
+            バックアップ
           </button>
 
         </div>
@@ -380,6 +983,88 @@ function App() {
     {selectedPrefecture &&
         raceData[selectedPrefecture as keyof typeof raceData] && (
           <div className="race-card">
+            {editingRace && (
+              <div className="edit-race-card">
+
+                <h3>大会編集</h3>
+
+                <input
+                  type="text"
+                  value={editingRace.race}
+                  onChange={(e) =>
+                    setEditingRace({
+                      ...editingRace,
+                      race: e.target.value,
+                    })
+                  }
+                />
+
+                <input
+                  type="date"
+                  value={editingRace.date}
+                  onChange={(e) =>
+                    setEditingRace({
+                      ...editingRace,
+                      date: e.target.value,
+                    })
+                  }
+                />
+
+                <input
+                  type="text"
+                  value={editingRace.time}
+                  onChange={(e) =>
+                    setEditingRace({
+                      ...editingRace,
+                      time: e.target.value,
+                    })
+                  }
+                />
+
+                <input
+                  type="text"
+                  value={editingRace.distance}
+                  onChange={(e) =>
+                    setEditingRace({
+                      ...editingRace,
+                      distance: e.target.value,
+                    })
+                  }
+                />
+                
+                <select
+                  value={editingRace.type}
+                    onChange={(e) =>
+                      setEditingRace({
+                        ...editingRace,
+                        type: e.target.value,
+                      })
+                    }
+                >
+                  <option value="full">
+                    フルマラソン
+                  </option>
+
+                  <option value="half">
+                    ハーフマラソン
+                  </option>
+
+                  <option value="trail">
+                    トレイルマラソン
+                  </option>
+
+                  <option value="other">
+                    その他
+                  </option>
+
+                </select>
+
+                <button onClick={handleSaveEdit}>
+                  保存
+                </button>
+
+              </div>
+            )}
             <button
               className="close-button"
               onClick={() =>
@@ -398,6 +1083,8 @@ function App() {
                 <p>大会名：{race.race}</p>
                 <p>日付：{race.date}</p>
                 <p>タイム：{race.time}</p>
+                <p>距離：{race.distance}km</p>
+                <p>種別：{race.type}</p>
 
                 {race.garminUrl && (
                   <a>
@@ -406,6 +1093,18 @@ function App() {
                   </a>
                 )}
                 
+                <button
+                  onClick={() =>
+                    setEditingRace({
+                      prefecture: selectedPrefecture,
+                      index: index,
+                      ...race,
+                    })
+                  }
+                >
+                  編集
+                </button>
+
                 <button
                   onClick={() =>
                     handleDeleteRace(
@@ -477,6 +1176,41 @@ function App() {
             setNewRaceTime(e.target.value)
           }
         />
+        
+        <input
+          type="text"
+          value={newDistance}
+          placeholder="距離(km)"
+          readOnly
+        />
+
+        <select
+          value={newRaceType}
+          onChange={(e) =>
+            setNewRaceType(e.target.value)
+          }
+        >
+          <option value="">
+            大会タイプ選択
+          </option>
+
+          <option value="full">
+            フルマラソン
+          </option>
+
+          <option value="half">
+            ハーフマラソン
+          </option>
+
+          <option value="trail">
+            トレイルマラソン
+          </option>
+
+          <option value="other">
+            その他
+          </option>
+        </select>
+        
 
         <input
           type="text"
@@ -501,26 +1235,199 @@ function App() {
 
     {menuPage === "filter" && (
       <div className="filter-card">
+        <button
+          onClick={() => setRaceFilter("all")}
+        >
+          すべて
+        </button>
 
-        <button>すべて</button>
+        <button
+          onClick={() => setRaceFilter("full")}
+        >
+          フル
+        </button>
 
-        <button>フル</button>
+        <button
+          onClick={() => setRaceFilter("half")}
+        >
+          ハーフ
+        </button>
 
-        <button>ハーフ</button>
+        <button
+          onClick={() => setRaceFilter("trail")}
+        >
+          トレイル
+        </button>
 
-        <button>トレイル</button>
-
-        <button>その他</button>
-
+        <button
+          onClick={() => setRaceFilter("other")}
+        >
+          その他
+        </button>
       </div>
     )}
 
+    {menuPage === "raceList" && (
+      <div className="race-list-card">
+        <h3>大会一覧</h3>
+        <select
+          value={sortType}
+          onChange={(e) =>
+            setSortType(e.target.value)
+          }
+        >
+          <option value="date">
+            日付順
+          </option>
+          <option value="time">
+            タイム順
+          </option>
+          <option value="year">
+            年別
+          </option>
+        </select>
+        {(() => {
+
+          let currentYear = "";
+
+          return sortedRaces.map(
+            (race, index) => {
+
+              const year =
+                race.date.substring(0, 4);
+
+              const showYear =
+                currentYear !== year;
+
+              currentYear = year;
+
+              return (
+                <div key={index}>
+
+                  {showYear && (
+                    <h3>
+                      {year}年
+                    </h3>
+                  )}
+
+                  <strong>
+                    {race.race}
+                  </strong>
+
+                  <br />
+
+                  {race.prefecture}
+
+                  <br />
+
+                  {race.date}
+
+                  <br />
+
+                  {race.time}
+
+                  <hr />
+
+                </div>
+              );
+            }
+          );
+
+        })()}
+
+      </div>
+      )}
+
+      {menuPage === "stats" && (
+
+        <div className="stats-card">
+
+          <h3>統計情報</h3>
+
+          <p>
+            出走数：
+            {raceCount}
+          </p>
+
+          <p>
+            総距離：
+            {totalDistance.toFixed(1)}
+            km
+          </p>
+
+          <p>
+            ベストタイム：
+            {
+              secondsToTime(
+                bestTimeSeconds
+              )
+            }
+          </p>
+
+          {bestRace && (
+            <>
+              <p>
+                ベスト大会：
+                {bestRace.race}
+              </p>
+
+              <p>
+                記録日：
+                {bestRace.date}
+              </p>
+            </>
+          )}
+
+          <p>
+            平均タイム：
+            {
+              secondsToTime(
+                averageTimeSeconds
+              )
+            }
+          </p>
+
+        </div>
+
+      )}
+
+      {menuPage === "backup" && (
+
+        <div className="backup-card">
+
+          <h3>
+            バックアップ
+          </h3>
+
+          <button
+            onClick={
+              handleExportData
+            }
+          >
+            バックアップ保存
+          </button>
+
+          <br />
+          <br />
+
+          <input
+            type="file"
+            accept=".json"
+            onChange={
+              handleImportData
+            }
+          />
+
+        </div>
+
+      )}
 
     <MapContainer
       center={[36.2, 138.2]}
       zoom={5}
       style={{ height: "100vh", width: "100%" }}
     >
+      
       <TileLayer
         attribution="OpenStreetMap"
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -535,9 +1442,8 @@ function App() {
             return {
               color: "#333",
               weight: 1,
-              fillColor: filteredPrefectures.includes(prefName)
-                ? "#2196F3"
-                : "#E0E0E0",
+              fillColor:
+                getPrefectureColor(prefName),
               fillOpacity: 0.7,
             };
           }}
@@ -558,7 +1464,35 @@ function App() {
       )}
     </MapContainer>
 
+    <div className="legend-card">
+
+      <h4>凡例</h4>
+
+      {raceFilter === "full" && (
+        <>
+          <p><span className="legend-red"></span> ～2:59</p>
+          <p><span className="legend-orange"></span> ～3:29</p>
+          <p><span className="legend-yellow"></span> ～3:59</p>
+          <p><span className="legend-green"></span> ～4:29</p>
+          <p><span className="legend-blue"></span> 4:30～</p>
+        </>
+      )}
+
+      {raceFilter === "half" && (
+        <>
+          <p><span className="legend-red"></span> ～1:29</p>
+          <p><span className="legend-orange"></span> ～1:44</p>
+          <p><span className="legend-yellow"></span> ～1:59</p>
+          <p><span className="legend-green"></span> ～2:29</p>
+          <p><span className="legend-blue"></span> 2:30～</p>
+        </>
+      )}
+
+    </div>
+
   </div>
+
+  
 
     
     
